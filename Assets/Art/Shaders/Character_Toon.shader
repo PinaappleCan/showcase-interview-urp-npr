@@ -22,7 +22,9 @@ Shader "BP/Character_Toon"
 
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+        //#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UnityGBuffer.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
+        #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/ParallaxMapping.hlsl"
 
         ENDHLSL
 
@@ -34,8 +36,8 @@ Shader "BP/Character_Toon"
                 "LightMode" = "UniversalForward"
             }
             HLSLPROGRAM
-            #pragma vertex character_vert
-            #pragma fragment character_frag
+            #pragma vertex character_vert_forward
+            #pragma fragment character_frag_forward
 
             TEXTURE2D(_MainTex);        SAMPLER(sampler_MainTex);
             TEXTURE2D(_DI_Tex);         SAMPLER(sampler_DI_Tex);
@@ -46,9 +48,27 @@ Shader "BP/Character_Toon"
             float _RimLightThreshold;
             float4 _RimColor;
             #include "./Character_Include.hlsl"
-            #include "./Character_Lighting.hlsl"
+            #include "./Character_Lighting_Forward.hlsl"
 
             ENDHLSL
+        }
+
+        Pass
+        {
+            Name "GBuffer"
+            Tags
+            {
+                "LightMode" = "UniversalGBuffer"
+            }
+            HLSLPROGRAM
+            #pragma vertex character_vert_gbuffer
+            #pragma fragment character_frag_gbuffer
+
+
+            #include "./Character_Include.hlsl"
+            #include "./Character_Lighting_GBuffer.hlsl"
+            ENDHLSL
+        
         }
 
         Pass
