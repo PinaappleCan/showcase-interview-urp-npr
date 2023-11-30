@@ -45,4 +45,13 @@ float Character_Rim(float2 screenUV, float rimWidth, float rimLightThreshold)
     return Sobel * DistanceAlpha;
 }
 
+
+
+
+half3 PackNormal(half3 n)
+{
+    float2 octNormalWS = PackNormalOctQuadEncode(n); // values between [-1, +1], must use fp32 on some platforms.
+    float2 remappedOctNormalWS = saturate(octNormalWS * 0.5 + 0.5); // values between [ 0, +1]
+    return PackFloat2To888(remappedOctNormalWS); // values between [ 0, +1]
+}
 #endif

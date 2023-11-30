@@ -57,11 +57,9 @@ Varyings character_vert_gbuffer(Attributes input)
     
     output.normalWS = TransformObjectToWorldNormal(input.normalOS);
 
-
     real sign = input.tangentOS.w * GetOddNegativeScale();
     half4 tangentWS = half4(TransformObjectToWorldDir(input.tangentOS.xyz), sign);
     output.tangentWS = tangentWS;
-
 
     half3 viewDirWS = GetWorldSpaceNormalizeViewDir(output.positionWS);
     half3 viewDirTS = GetViewDirectionTangentSpace(tangentWS, output.normalWS, viewDirWS);
@@ -72,11 +70,13 @@ Varyings character_vert_gbuffer(Attributes input)
 
 FragmentOutput character_frag_gbuffer(Varyings input)
 {
+    float4 col = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv);
     FragmentOutput output;
-    output.GBuffer0 = half4(0.5, 0.5, 0.5, 0.5);            // diffuse           diffuse         diffuse         materialFlags   (sRGB rendertarget)
-    output.GBuffer1 = half4(0.5, 0.5, 0.5, 0.5);            // metallic/specular specular        specular        occlusion
-    output.GBuffer2 = half4(0.5, 0.5, 0.5, 0.5);            // encoded-normal    encoded-normal  encoded-normal  smoothness
-    output.GBuffer3 = half4(0.5, 0.5, 0.5, 0.5);            // GI                GI              GI              [optional: see OutputAlpha()] (lighting buffer)
+    output.GBuffer0 = col;                                      // diffuse           diffuse         diffuse         materialFlags   (sRGB rendertarget)
+    output.GBuffer1 = half4(0.0, 0, 0, 0.0);                    // metallic/specular specular        specular        occlusion
+    output.GBuffer2 = half4(PackNormal(input.normalWS), 0.8);   // encoded-normal    encoded-normal  encoded-normal  smoothness
+    //output.GBuffer2 = half4(0.5,0.5,0.5, 1);                  // encoded-normal    encoded-normal  encoded-normal  smoothness
+    output.GBuffer3 = half4(col.rgb, 0.8); // GI                GI              GI              unused          (lighting buffer)
 #if OUTPUT_SHADOWMASK
     output.GBuffer4 = half4(1.0, 1.0, 1.0, 1.0);             // will have unity_ProbesOcclusion value if subtractive lighting is used (baked)
 #endif

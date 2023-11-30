@@ -26,6 +26,15 @@ Shader "BP/Character_Toon"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
         #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/ParallaxMapping.hlsl"
 
+        TEXTURE2D(_MainTex);        SAMPLER(sampler_MainTex);
+        TEXTURE2D(_DI_Tex);         SAMPLER(sampler_DI_Tex);
+        TEXTURE2D(_SP_Tex);         SAMPLER(sampler_SP_Tex);
+        float4 _MainTex_ST;
+        float4 _ShadowColor;
+        float _RimWidth;
+        float _RimLightThreshold;
+        float4 _RimColor;
+
         ENDHLSL
 
         Pass
@@ -39,15 +48,7 @@ Shader "BP/Character_Toon"
             #pragma vertex character_vert_forward
             #pragma fragment character_frag_forward
 
-            TEXTURE2D(_MainTex);        SAMPLER(sampler_MainTex);
-            TEXTURE2D(_DI_Tex);         SAMPLER(sampler_DI_Tex);
-            TEXTURE2D(_SP_Tex);         SAMPLER(sampler_SP_Tex);
-            float4 _MainTex_ST;
-            float4 _ShadowColor;
-            float _RimWidth;
-            float _RimLightThreshold;
-            float4 _RimColor;
-            #include "./Character_Include.hlsl"
+            #include "./Character_Include_Forward.hlsl"
             #include "./Character_Lighting_Forward.hlsl"
 
             ENDHLSL
@@ -64,8 +65,9 @@ Shader "BP/Character_Toon"
             #pragma vertex character_vert_gbuffer
             #pragma fragment character_frag_gbuffer
 
+            #pragma multi_compile_fragment _ _GBUFFER_NORMALS_OCT
 
-            #include "./Character_Include.hlsl"
+            #include "./Character_Include_GBuffer.hlsl"
             #include "./Character_Lighting_GBuffer.hlsl"
             ENDHLSL
         
