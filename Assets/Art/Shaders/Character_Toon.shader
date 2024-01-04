@@ -67,6 +67,7 @@ Shader "BP/Character_Toon"
 
             #pragma multi_compile_fragment _ _GBUFFER_NORMALS_OCT
 
+            #include "./GBuffer_ShadingModel_ID.hlsl"
             #include "./Character_Include_GBuffer.hlsl"
             #include "./Character_Lighting_GBuffer.hlsl"
             ENDHLSL

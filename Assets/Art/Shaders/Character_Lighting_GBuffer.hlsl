@@ -37,6 +37,7 @@ struct FragmentOutput
 #if OUTPUT_SHADOWMASK
     half4 GBuffer4 : SV_Target4;
 #endif
+    half4 GBuffer5 : SV_Target5;
 };
 
 
@@ -76,11 +77,11 @@ FragmentOutput character_frag_gbuffer(Varyings input)
     output.GBuffer1 = half4(0.0, 0, 0, 0.0);                    // metallic/specular specular        specular        occlusion
     output.GBuffer2 = half4(PackNormal(input.normalWS), 0.8);   // encoded-normal    encoded-normal  encoded-normal  smoothness
     //output.GBuffer2 = half4(0.5,0.5,0.5, 1);                  // encoded-normal    encoded-normal  encoded-normal  smoothness
-    output.GBuffer3 = half4(col.rgb, 0.8); // GI                GI              GI              unused          (lighting buffer)
+    output.GBuffer3 = half4(col.rgb, CHARACTER_MONSTER_ID_PERCENT); // GI                GI              GI              unused          (lighting buffer)
 #if OUTPUT_SHADOWMASK
     output.GBuffer4 = half4(1.0, 1.0, 1.0, 1.0);             // will have unity_ProbesOcclusion value if subtractive lighting is used (baked)
 #endif
-    
+    output.GBuffer5 = half4(1.0, 1.0, 1.0, 1.0);
     return output;
 }
 

@@ -81,8 +81,8 @@ namespace UnityEngine.Rendering.Universal.Internal
                 for (int i = 0; i < gbufferAttachments.Length; ++i)
                 {
                     // Lighting buffer has already been declared with line ConfigureCameraTarget(m_ActiveCameraColorAttachment.Identifier(), ...) in DeferredRenderer.Setup
-                    if (i == m_DeferredLights.GBufferLightingIndex)
-                        continue;
+                    //if (i == m_DeferredLights.GBufferLightingIndex)
+                    //    continue;
 
                     // Normal buffer may have already been created if there was a depthNormal prepass before.
                     // DepthNormal prepass is needed for forward-only materials when SSAO is generated between gbuffer and deferred lighting pass.
@@ -254,6 +254,7 @@ namespace UnityEngine.Rendering.Universal.Internal
                     }
                 });
             }
+
         }
     }
 }

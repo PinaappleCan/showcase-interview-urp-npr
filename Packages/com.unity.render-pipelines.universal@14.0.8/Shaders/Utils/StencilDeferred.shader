@@ -33,7 +33,7 @@ Shader "Hidden/Universal Render Pipeline/StencilDeferred"
     #include "Packages/com.unity.render-pipelines.universal/Shaders/Utils/Deferred.hlsl"
     #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
     #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/FoveatedRendering.hlsl"
-
+    #include "Assets/Art/Shaders/GBuffer_ShadingModel_ID.hlsl"
     struct Attributes
     {
         float4 positionOS : POSITION;
@@ -108,6 +108,7 @@ Shader "Hidden/Universal Render Pipeline/StencilDeferred"
     TEXTURE2D_X_HALF(_GBuffer0);
     TEXTURE2D_X_HALF(_GBuffer1);
     TEXTURE2D_X_HALF(_GBuffer2);
+    TEXTURE2D_X_FLOAT(_GBuffer3);
 
 #if _RENDER_PASS_ENABLED
 
@@ -256,6 +257,7 @@ Shader "Hidden/Universal Render Pipeline/StencilDeferred"
         half4 gbuffer0 = LOAD_FRAMEBUFFER_INPUT(GBUFFER0, input.positionCS.xy);
         half4 gbuffer1 = LOAD_FRAMEBUFFER_INPUT(GBUFFER1, input.positionCS.xy);
         half4 gbuffer2 = LOAD_FRAMEBUFFER_INPUT(GBUFFER2, input.positionCS.xy);
+
         #if defined(_DEFERRED_MIXED_LIGHTING)
         shadowMask = LOAD_FRAMEBUFFER_INPUT(GBUFFER4, input.positionCS.xy);
         #endif
@@ -338,7 +340,13 @@ Shader "Hidden/Universal Render Pipeline/StencilDeferred"
             color = diffuseColor * surfaceData.albedo + specularColor;
         #endif
 
-        return half4(color, alpha);
+
+        float4 gbuffer3 = SAMPLE_TEXTURE2D_X_LOD(_GBuffer3, my_point_clamp_sampler, screen_uv, 0);
+
+        float shadingModelID = IsMonsterID(gbuffer3.w);
+
+
+        return half4(shadingModelID.xxx, alpha);
     }
 
     half4 FragFog(Varyings input) : SV_Target

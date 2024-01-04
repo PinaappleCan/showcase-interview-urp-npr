@@ -63,10 +63,12 @@
     <Compile Include="Assets\Scripts\SimpleCameraController.cs" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="Assets\Art\Shaders\Character_Include.hlsl" />
+    <None Include="Assets\Art\Shaders\Character_Include_Forward.hlsl" />
+    <None Include="Assets\Art\Shaders\GBuffer_ShadingModel_ID.hlsl" />
     <None Include="Assets\Art\Shaders\Character_DepthOnly.hlsl" />
     <None Include="Assets\Art\Shaders\Character_Lighting_Forward.hlsl" />
     <None Include="Assets\Art\Shaders\Character_Toon.shader" />
+    <None Include="Assets\Art\Shaders\Character_Include_GBuffer.hlsl" />
     <None Include="Assets\Art\Shaders\Character_Lighting_GBuffer.hlsl" />
   </ItemGroup>
   <ItemGroup>

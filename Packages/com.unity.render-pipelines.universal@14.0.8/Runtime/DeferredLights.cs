@@ -410,8 +410,10 @@ namespace UnityEngine.Rendering.Universal.Internal
                 this.GbufferRTHandles = new RTHandle[gbufferSliceCount];
                 this.GbufferFormats = new GraphicsFormat[gbufferSliceCount];
                 this.GbufferTextureHandles = new TextureHandle[gbufferSliceCount];
+                Debug.Log(gbufferSliceCount);
                 for (int i = 0; i < gbufferSliceCount; ++i)
                 {
+                    Debug.Log(k_GBufferNames[i]);
                     this.GbufferRTHandles[i] = RTHandles.Alloc(k_GBufferNames[i], name: k_GBufferNames[i]);
                     this.GbufferAttachments[i] = this.GbufferRTHandles[i];
                     this.GbufferFormats[i] = this.GetGBufferFormat(i);
