@@ -33,7 +33,7 @@ Shader "Hidden/Universal Render Pipeline/StencilDeferred"
     #include "Packages/com.unity.render-pipelines.universal/Shaders/Utils/Deferred.hlsl"
     #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
     #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/FoveatedRendering.hlsl"
-    #include "Assets/Art/Shaders/GBuffer_ShadingModel_ID.hlsl"
+    #include "Assets/Art/Shaders/Characters/GBuffer_ShadingModel_ID.hlsl"
     struct Attributes
     {
         float4 positionOS : POSITION;

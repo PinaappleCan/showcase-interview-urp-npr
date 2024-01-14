@@ -69,6 +69,8 @@ namespace UnityEngine.Rendering.Universal
         ColorAdjustments m_ColorAdjustments;
         Tonemapping m_Tonemapping;
         FilmGrain m_FilmGrain;
+        Diffusion m_Diffusion;
+
 
         // Misc
         const int k_MaxPyramidSize = 16;
@@ -306,6 +308,7 @@ namespace UnityEngine.Rendering.Universal
             m_MotionBlur = stack.GetComponent<MotionBlur>();
             m_PaniniProjection = stack.GetComponent<PaniniProjection>();
             m_Bloom = stack.GetComponent<Bloom>();
+            m_Diffusion = stack.GetComponent<Diffusion>();
             m_LensDistortion = stack.GetComponent<LensDistortion>();
             m_ChromaticAberration = stack.GetComponent<ChromaticAberration>();
             m_Vignette = stack.GetComponent<Vignette>();
@@ -1203,9 +1206,36 @@ namespace UnityEngine.Rendering.Universal
                 uberMaterial.EnableKeyword(dirtIntensity > 0f ? ShaderKeywordStrings.BloomLQDirt : ShaderKeywordStrings.BloomLQ);
         }
 
-#endregion
+        #endregion
 
-#region Lens Distortion
+        #region Diffusion
+        private Shader m_DiffusionShader;
+        private Material m_DiffusionMaterial;
+
+        private RTHandle m_DiffusionComposite;
+        private RTHandle m_DiffusionX1;
+        private RTHandle m_DiffusionX2;
+        private RTHandle m_DiffusionY2;
+
+
+        void SetupDiffusion(CommandBuffer cmd, RTHandle source, Material uberMaterial)
+        {
+            int width = m_Descriptor.width;
+            int height = m_Descriptor.height;
+            RenderingUtils.ReAllocateIfNeeded(ref m_DiffusionComposite, m_Descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: m_DiffusionComposite.name);
+            RenderingUtils.ReAllocateIfNeeded(ref m_DiffusionX1, m_Descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: m_DiffusionX1.name);
+
+            RenderingUtils.ReAllocateIfNeeded(ref m_DiffusionX2, m_Descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: m_DiffusionX2.name);
+            RenderingUtils.ReAllocateIfNeeded(ref m_DiffusionY2, m_Descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: m_DiffusionY2.name);
+
+            cmd.EnableShaderKeyword("_Diffusion");
+            //cmd.SetRenderTarget()
+
+        }
+
+        #endregion
+
+        #region Lens Distortion
 
         void SetupLensDistortion(Material material, bool isSceneView)
         {
