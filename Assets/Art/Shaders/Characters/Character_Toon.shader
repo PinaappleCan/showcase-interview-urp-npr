@@ -17,6 +17,10 @@ Shader "BP/Character_Toon"
         [HDR]_Emissive1Color("Emissive1 Color", Color) = (1,1,1,1)
         [HDR]_Emissive2Color("Emissive2 Color", Color) = (1,1,1,1)
         [Toggle] _SwitchShadowMode("Switch Shadow Mode", Float) = 0
+
+        _GradingHeight("Grading Height", Range(0, 30)) = 1
+        _GradingOffset("Grading Offset", Range(-10, 10)) = 0
+        [HDR]_GradingColor("Grading Color", Color) = (.5, .5, .5, .5)
         [HDR]_ShadowColor("Shadow Color", Color) = (.5, .5, .5, .5)
 
         _OutlineWidth("Outline Width", Float) = 0.01
@@ -42,6 +46,9 @@ Shader "BP/Character_Toon"
         TEXTURE2D(_MainTex);        SAMPLER(sampler_MainTex);
         TEXTURE2D(_DI_Tex);         SAMPLER(sampler_DI_Tex);
         TEXTURE2D(_SP_Tex);         SAMPLER(sampler_SP_Tex);
+
+        float4 _GradingColor;
+        float _GradingHeight, _GradingOffset ;
 
         float _SwitchShadowMode;
 

@@ -119,6 +119,8 @@ Material:
     - _GlossMapScale: 0
     - _Glossiness: 0
     - _GlossyReflections: 0
+    - _GradingHeight: 1
+    - _GradingOffset: 0
     - _Metallic: 0
     - _OcclusionStrength: 1
     - _OutlineWidth: 0.7
@@ -142,10 +144,11 @@ Material:
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _Emissive1Color: {r: 1, g: 1, b: 1, a: 1}
     - _Emissive2Color: {r: 1, g: 1, b: 1, a: 1}
+    - _GradingColor: {r: 0.5, g: 0.5, b: 0.5, a: 0.5}
     - _InlineColor: {r: 1, g: 1, b: 1, a: 1}
     - _MainColor: {r: 0.7, g: 0.7, b: 0.7, a: 1}
     - _OutlineColor: {r: 0, g: 0, b: 0, a: 0}
-    - _RimColor: {r: 0.2924528, g: 0.23932365, b: 0.21382163, a: 1}
+    - _RimColor: {r: 0.2830189, g: 0.22831607, b: 0.2042542, a: 1}
     - _ShadowColor: {r: 0.2924528, g: 0.15312387, b: 0.1878639, a: 0.5}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
     - _SpecularColor: {r: 1, g: 1, b: 1, a: 1}

@@ -26,6 +26,7 @@ struct Varyings
     float4 tangentWS        : TEXCOORD6; // xyz: tangent, w: sign
     float3 viewDirWS        : TEXCOORD7;
     float4 color            : TEXCOORD8;
+    float4 positionOS       : TEXCOORD9;
     float4 positionCS       : SV_POSITION;
     
     UNITY_VERTEX_INPUT_INSTANCE_ID
@@ -36,6 +37,7 @@ struct Varyings
 Varyings character_vert_forward(Attributes input)
 {
     Varyings output = (Varyings)0;
+    output.positionOS = input.positionOS;
 
     output.positionWS = TransformObjectToWorld(input.positionOS);
     output.positionVS = TransformWorldToView(output.positionWS);
@@ -67,7 +69,7 @@ float4 character_frag_forward(Varyings input) : SV_Target
     float3 H = normalize(lightWS + viewWS);
     float NdotL = step(-0.2, dot(normalWS, light.direction));
     float NdotH = max(0, dot(H, normalWS));
-
+    float NdotV = max(0, dot(normalWS, viewWS));
 
     float4 mainMap = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv) * _MainColor;
     float4 diMap = SAMPLE_TEXTURE2D(_DI_Tex, sampler_DI_Tex, input.uv);
@@ -87,9 +89,15 @@ float4 character_frag_forward(Varyings input) : SV_Target
 
     col = lerp(_InlineColor, col, diMap.a);
 
+
+    float grading = saturate((input.positionOS.z + _GradingOffset) / _GradingHeight);
+    //return grading;
+    //float ndvRimRange = pow(1 - NdotV, 3) * shadowArea * diMap.g;
+ 
     float rimRange = Character_Rim(positionSS, _RimWidth, _RimLightThreshold) * shadowArea * diMap.g;
     col += rimRange * _RimColor;// lerp(col, _RimColor, rimRange);
     col += emissiveColor + specularColor;
+    col = lerp(col * _GradingColor, col, grading);
 
     return col;
 }

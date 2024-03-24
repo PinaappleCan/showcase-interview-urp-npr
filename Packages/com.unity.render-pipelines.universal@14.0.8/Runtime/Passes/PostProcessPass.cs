@@ -70,6 +70,7 @@ namespace UnityEngine.Rendering.Universal
         Tonemapping m_Tonemapping;
         FilmGrain m_FilmGrain;
         Diffusion m_Diffusion;
+        ScreenSpaceGlobalIllumination m_ScreenSpaceGlobalIllumination;
 
 
         // Misc
@@ -164,6 +165,25 @@ namespace UnityEngine.Rendering.Universal
                 m_BloomMipDown[i] = RTHandles.Alloc(ShaderConstants._BloomMipDown[i], name: "_BloomMipDown" + i);
             }
 
+            // SSGI
+            ShaderConstants._ssgiEnv = new int[g_SSGIDownsampleCount];
+            ShaderConstants._ssgiEnvMiddle = new int[g_SSGIDownsampleCount];
+            ShaderConstants._ssgiEnvFar = new int[g_SSGIDownsampleCount];
+            m_SSGIEnvHandles = new RTHandle[g_SSGIDownsampleCount];
+            m_SSGIEnvMiddleHandles = new RTHandle[g_SSGIDownsampleCount];
+            m_SSGIEnvFarHandles = new RTHandle[g_SSGIDownsampleCount];
+
+            for (int i = 0; i < g_SSGIDownsampleCount; i++)
+            {
+                ShaderConstants._ssgiEnv[i] = Shader.PropertyToID("_SSGIEnv" + i);
+                ShaderConstants._ssgiEnvMiddle[i] = Shader.PropertyToID("_SSGIEnvMiddle" + i);
+                ShaderConstants._ssgiEnvFar[i] = Shader.PropertyToID("_SSGIEnvFar" + i);
+                m_SSGIEnvHandles[i] = RTHandles.Alloc(ShaderConstants._ssgiEnv[i], name: "_SSGIEnv" + i);
+                m_SSGIEnvMiddleHandles[i] = RTHandles.Alloc(ShaderConstants._ssgiEnvMiddle[i], name: "_SSGIEnvMiddle" + i);
+                m_SSGIEnvFarHandles[i] = RTHandles.Alloc(ShaderConstants._ssgiEnvFar[i], name: "_SSGIEnvFar" + i);
+            }
+
+
             m_MRT2 = new RenderTargetIdentifier[2];
             base.useNativeRenderPass = false;
 
@@ -216,6 +236,23 @@ namespace UnityEngine.Rendering.Universal
             m_EdgeStencilTexture?.Release();
             m_TempTarget?.Release();
             m_TempTarget2?.Release();
+
+            //diffusion
+            m_DiffusionComposite?.Release();
+            m_DiffusionY2?.Release();
+            m_DiffusionX2?.Release();
+            m_DiffusionX1?.Release();
+
+            //ssgi
+            foreach (var handle in m_SSGIEnvHandles)
+                handle?.Release();
+            foreach (var handle in m_SSGIEnvMiddleHandles)
+                handle?.Release();
+            foreach (var handle in m_SSGIEnvFarHandles)
+                handle?.Release();
+            m_FilterHandle?.Release();
+            m_OutputHandle?.Release();
+            m_SSGIOutputTexture?.Release();
         }
 
         /// <summary>
@@ -309,6 +346,7 @@ namespace UnityEngine.Rendering.Universal
             m_PaniniProjection = stack.GetComponent<PaniniProjection>();
             m_Bloom = stack.GetComponent<Bloom>();
             m_Diffusion = stack.GetComponent<Diffusion>();
+            m_ScreenSpaceGlobalIllumination = stack.GetComponent<ScreenSpaceGlobalIllumination>();
             m_LensDistortion = stack.GetComponent<LensDistortion>();
             m_ChromaticAberration = stack.GetComponent<ChromaticAberration>();
             m_Vignette = stack.GetComponent<Vignette>();
@@ -521,6 +559,26 @@ namespace UnityEngine.Rendering.Universal
                 // Reset uber keywords
                 m_Materials.uber.shaderKeywords = null;
 
+                bool ssgiActive = m_ScreenSpaceGlobalIllumination.IsActive();
+                if (ssgiActive) 
+                {
+                    m_Materials.uber.EnableKeyword(ShaderKeywordStrings.EnableSSGI);
+                    if (m_ScreenSpaceGlobalIllumination.SSGIDebug.value) {
+                        m_Materials.uber.EnableKeyword(ShaderKeywordStrings.DebugSSGI);
+                    }
+                    using (new ProfilingScope(cmd, ProfilingSampler.Get(URPProfileId.SSGI))) { 
+                        SetupSSGI(cmd, GetSource(), m_Materials.ssgi, cameraData);
+                    }
+                }
+
+                bool diffusionActive = m_Diffusion.IsActive();
+                if (diffusionActive)
+                {
+ 
+                    m_Materials.uber.EnableKeyword(ShaderKeywordStrings.EnableDiffusion);
+                    using (new ProfilingScope(cmd, ProfilingSampler.Get(URPProfileId.Diffusion)))
+                        SetupDiffusion(cmd, GetSource(), m_Materials.diffusion);
+                }
                 // Bloom goes first
                 bool bloomActive = m_Bloom.IsActive();
                 if (bloomActive)
@@ -528,7 +586,6 @@ namespace UnityEngine.Rendering.Universal
                     using (new ProfilingScope(cmd, ProfilingSampler.Get(URPProfileId.Bloom)))
                         SetupBloom(cmd, GetSource(), m_Materials.uber);
                 }
-
                 // Lens Flare
                 if (useLensFlare)
                 {
@@ -1208,30 +1265,472 @@ namespace UnityEngine.Rendering.Universal
 
         #endregion
 
-        #region Diffusion
-        private Shader m_DiffusionShader;
-        private Material m_DiffusionMaterial;
+
+        #region SSGI
+
+        enum SSGIMaterialPass
+        {
+            PreSample = 0,
+            DepthSeparate = 1,
+            DownSample = 2,
+            Ouput = 3
+        }
+
+        private const int g_SSGIDownsampleCount = 7;
+        private static readonly Vector2 g_MaxRes = new Vector2(2560, 1440);
+
+        //[Range(0.0f, 1.0f)]
+        private float SSGIIntensity = 0.0f;
+        //[Range(0.0f, 1.0f)]
+        private float SSGIThreshold = 0.293f;
+
+        private bool SSGIDownsampleFullSeparate = false;
+
+        private int SSGIQuality = 2;
+
+        private bool SSGIBoundryFade = true;
+
+        [SerializeField]
+        private Shader m_shader;
+        private Material m_material;
+
+
+        private RTHandle[] m_SSGIEnvHandles;
+        private RTHandle[] m_SSGIEnvMiddleHandles;
+        private RTHandle[] m_SSGIEnvFarHandles;
+
+        private RTHandle m_FilterHandle;
+        private RTHandle m_OutputHandle;
+
+        private RenderTexture m_SSGIOutputTexture;
+
+        void SetupSSGI(CommandBuffer cmd, RTHandle source, Material material, CameraData cameraData)
+        {
+            cmd.SetGlobalFloat("_ENABLE_SSGI", 1);
+            InitSSGI(cmd);
+
+            var sceneBufferSizeAndInverse = GetBufferSizeAndInverse(m_OutputHandle.rtHandleProperties.currentRenderTargetSize);
+            var sceneBufferBilinearMinMax = GetBufferBilinearMinMax(m_OutputHandle.rtHandleProperties.currentRenderTargetSize);
+
+            cmd.SetGlobalVector(ShaderConstants.SSGIDownSampleInputParameter0, sceneBufferSizeAndInverse);
+            cmd.SetGlobalVector(ShaderConstants.UVClampParam, new Vector4(sceneBufferBilinearMinMax.z, sceneBufferBilinearMinMax.w, 0.0f, 0.0f));
+
+
+            cmd.SetGlobalTexture(ShaderConstants.SSGIDownSampleInput0, source);
+            cmd.SetRenderTarget(m_FilterHandle.nameID, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.DontCare);
+            cmd.Blit(-1, BuiltinRenderTextureType.CurrentActive, material, (int)SSGIMaterialPass.PreSample);
+
+
+            for (int i = 0; i < g_SSGIDownsampleCount; i++)
+            {
+                var handle = i == 0 ? m_FilterHandle : m_SSGIEnvHandles[i - 1];
+          
+                Vector4 bufferSizeAndInverse = GetBufferSizeAndInverse(handle.rtHandleProperties.currentRenderTargetSize);
+                Vector4 bilinearMinMax = GetBufferBilinearMinMax(handle.rtHandleProperties.currentRenderTargetSize);
+
+                cmd.SetGlobalVector(ShaderConstants.SSGIDownSampleInputParameter0, bufferSizeAndInverse);
+                cmd.SetGlobalVector(ShaderConstants.UVClampParam, new Vector4(bilinearMinMax.z, bilinearMinMax.w, 0.0f, 0.0f));
+
+                cmd.SetGlobalTexture(ShaderConstants.SSGIDownSampleInput0, handle);
+                cmd.EnableShaderKeyword("OUTPUT_COUNT_3");
+
+                RenderTargetIdentifier[] rthandles = new RenderTargetIdentifier[3];
+                rthandles[0] = m_SSGIEnvHandles[i].nameID;
+                rthandles[1] = m_SSGIEnvMiddleHandles[i].nameID;
+                rthandles[2] = m_SSGIEnvFarHandles[i].nameID;
+
+                if (i >= 1)
+                {
+                    cmd.SetGlobalTexture(ShaderConstants.SSGIDownSampleInput1, m_SSGIEnvMiddleHandles[i - 1]);
+                    cmd.SetGlobalTexture(ShaderConstants.SSGIDownSampleInput2, m_SSGIEnvFarHandles[i - 1]);
+
+                    cmd.EnableShaderKeyword("DOWN_SAMPLE_METHOD_2");
+
+                    //CoreUtils.SetRenderTarget(cmd, rthandles, -1);
+                    //Vector2 viewportScale = source.useScaling ? new Vector2(source.rtHandleProperties.rtHandleScale.x, source.rtHandleProperties.rtHandleScale.y) : Vector2.one;
+                    //Blitter.BlitTexture(cmd, source, viewportScale, material, (int)SSGIMaterialPass.DownSample);
+                    cmd.SetRenderTarget(rthandles, -1);
+                    cmd.Blit(-1, BuiltinRenderTextureType.CurrentActive, material, (int)SSGIMaterialPass.DownSample);
+                }
+                else if(i == 0)
+                {
+                    cmd.SetGlobalTexture(ShaderConstants.HZBTexture, m_Depth);
+
+                    cmd.EnableShaderKeyword("DOWN_SAMPLE_METHOD_1");
+
+                    //CoreUtils.SetRenderTarget(cmd, rthandles, m_SSGIEnvHandles[i].nameID);
+                    //Vector2 viewportScale = source.useScaling ? new Vector2(source.rtHandleProperties.rtHandleScale.x, source.rtHandleProperties.rtHandleScale.y) : Vector2.one;
+                    //Blitter.BlitTexture(cmd, m_FilterHandle.nameID, viewportScale, material, (int)SSGIMaterialPass.DepthSeparate);
+
+                    cmd.SetRenderTarget(rthandles, -1);
+                    cmd.Blit(-1, BuiltinRenderTextureType.CurrentActive, material, (int)SSGIMaterialPass.DepthSeparate);
+                }
+
+
+                cmd.DisableShaderKeyword("OUTPUT_COUNT_2");
+                cmd.DisableShaderKeyword("OUTPUT_COUNT_3");
+
+                cmd.DisableShaderKeyword("DOWN_SAMPLE_METHOD_1");
+                cmd.DisableShaderKeyword("DOWN_SAMPLE_METHOD_2");
+            }
+
+
+            cmd.SetGlobalTexture(ShaderConstants.GIEnvTextureMap, m_SSGIEnvHandles[g_SSGIDownsampleCount - 1]);
+            cmd.SetGlobalTexture(ShaderConstants.GIEnvMiddleTextureMap, m_SSGIEnvMiddleHandles[g_SSGIDownsampleCount - 1]);
+            cmd.SetGlobalTexture(ShaderConstants.GIEnvFarTextureMap, m_SSGIEnvFarHandles[g_SSGIDownsampleCount - 1]);
+
+            cmd.SetGlobalTexture(ShaderConstants.SceneColorTexture, source);
+            cmd.SetGlobalTexture(ShaderConstants.SceneDepthTexture, m_Depth);
+
+            cmd.SetGlobalFloat(ShaderConstants.SSGIIntensity, SSGIIntensity);
+            cmd.SetGlobalFloat(ShaderConstants.SSGIThreshold, SSGIThreshold);
+
+            if (RenderSettings.sun)
+                cmd.SetGlobalVector(ShaderConstants.MainLightDirection, RenderSettings.sun.transform.forward);
+
+            cmd.SetGlobalMatrix(ShaderConstants.TranslatedWorldToView, cameraData.camera.transform.worldToLocalMatrix);
+            cmd.SetRenderTarget(m_SSGIOutputTexture, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+            cmd.Blit(-1, BuiltinRenderTextureType.CurrentActive, material, (int)SSGIMaterialPass.Ouput);
+
+            cmd.SetGlobalTexture(ShaderConstants.SSGIOutputTexture, m_SSGIOutputTexture);
+        }
+
+        public void InitSSGI(CommandBuffer cmd) 
+        {
+            SSGIIntensity = m_ScreenSpaceGlobalIllumination.SSGIIntensity.value;
+            SSGIThreshold = m_ScreenSpaceGlobalIllumination.SSGIThreshold.value;
+
+            SSGIDownsampleFullSeparate = m_ScreenSpaceGlobalIllumination.SSGIDownsampleFullSeparate.value;
+            SSGIBoundryFade = m_ScreenSpaceGlobalIllumination.SSGIBoundryFade.value;
+            SSGIQuality = m_ScreenSpaceGlobalIllumination.SSGIQuality.value;
+
+            var desc = GetCompatibleDescriptor(m_Descriptor.width, m_Descriptor.height, GraphicsFormat.B10G11R11_UFloatPack32);
+            desc.useMipMap = false;
+            desc.depthBufferBits = 0;
+            desc.msaaSamples = 1;
+            if (m_SSGIOutputTexture == null || m_SSGIOutputTexture.width != desc.width || m_SSGIOutputTexture.height != desc.height)
+            {
+                if (m_SSGIOutputTexture != null)
+                {
+                    m_SSGIOutputTexture.Release();
+                }
+
+                m_SSGIOutputTexture = RenderTexture.GetTemporary(desc);
+                m_SSGIOutputTexture.name = "_SSGIOutputTexture";
+                m_SSGIOutputTexture.filterMode = FilterMode.Bilinear;
+                m_SSGIOutputTexture.Create();
+            }
+
+            RenderingUtils.ReAllocateIfNeeded(ref m_OutputHandle, desc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_SSGIOutputTexture");
+
+            var width = (int)Mathf.Ceil((int)Mathf.Min(g_MaxRes.x, desc.width) / 2.0f);
+            var height = (int)Mathf.Ceil((int)Mathf.Min(g_MaxRes.y, desc.height) / 2.0f);
+            //var width = desc.width;
+            //var height = desc.height;
+
+            var filterDesc = desc;
+            filterDesc.width = width;
+            filterDesc.height = height;
+
+            RenderingUtils.ReAllocateIfNeeded(ref m_FilterHandle, filterDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_SSGIFilterTexture");
+           
+            for (int i = 0; i < g_SSGIDownsampleCount; i++)
+            {
+                width = (int)Mathf.Ceil(width / 2.0f);
+                height = (int)Mathf.Ceil(height / 2.0f);
+
+                var tempDesc = desc;
+                tempDesc.width = width;
+                tempDesc.height = height;
+
+                RenderingUtils.ReAllocateIfNeeded(ref m_SSGIEnvHandles[i], tempDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: m_SSGIEnvHandles[i].name);
+                RenderingUtils.ReAllocateIfNeeded(ref m_SSGIEnvMiddleHandles[i], tempDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: m_SSGIEnvMiddleHandles[i].name);
+                RenderingUtils.ReAllocateIfNeeded(ref m_SSGIEnvFarHandles[i], tempDesc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: m_SSGIEnvFarHandles[i].name);
+            }
+
+            if (SSGIDownsampleFullSeparate)
+            {
+                cmd.EnableShaderKeyword("DOWN_SAMPLE_FULL_SEPARATE");
+            }
+            else
+            {
+                cmd.DisableShaderKeyword("DOWN_SAMPLE_FULL_SEPARATE");
+            }
+
+            if (SSGIBoundryFade)
+            {
+                cmd.EnableShaderKeyword("SSGI_BOUNDARY_FADE");
+            }
+            else
+            {
+                cmd.DisableShaderKeyword("SSGI_BOUNDARY_FADE");
+            }
+
+            if (SSGIQuality >= 2)
+            {
+                cmd.EnableShaderKeyword("SSGI_QUALITY_HEIGH");
+            }
+            else
+            {
+                cmd.DisableShaderKeyword("SSGI_QUALITY_HEIGH");
+            }
+
+          
+        }
+
+        public Vector4 GetBufferSizeAndInverse(Vector2 prop)
+        {
+            float width = prop.x;
+            float height = prop.y;
+            return new Vector4(width, height, 1.0f / width, 1.0f / height);
+        }
+
+        public Vector4 GetBufferBilinearMinMax(Vector2 prop)
+        {
+            float width = prop.x;
+            float height = prop.y;
+            return new Vector4(0.5f / width, 0.5f / height, (width - 0.5f) / width, (height - 0.5f) / height);
+        }
+
+        #endregion
+
+
+        #region Diffusion  
+
+
+        private const int MAX_FILTER_SAMPLES = 32;
+        private static readonly int s_sampleCountMax = 32;
+        private Vector2[] m_offsetAndWeight = new Vector2[MAX_FILTER_SAMPLES];
+        private Vector2[] m_sampleOffsets = new Vector2[MAX_FILTER_SAMPLES];
+        private Vector2[] m_sampleWeights = new Vector2[MAX_FILTER_SAMPLES];
+        private Vector4[] m_shaderOffsets = new Vector4[(MAX_FILTER_SAMPLES + 1) / 2];
+        private Vector4[] m_shaderWeights = new Vector4[MAX_FILTER_SAMPLES];
 
         private RTHandle m_DiffusionComposite;
         private RTHandle m_DiffusionX1;
         private RTHandle m_DiffusionX2;
         private RTHandle m_DiffusionY2;
 
+        private RTHandle m_DiffusionTexture;
 
-        void SetupDiffusion(CommandBuffer cmd, RTHandle source, Material uberMaterial)
+        enum DiffusionMaterialPass
         {
-            int width = m_Descriptor.width;
-            int height = m_Descriptor.height;
-            RenderingUtils.ReAllocateIfNeeded(ref m_DiffusionComposite, m_Descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: m_DiffusionComposite.name);
-            RenderingUtils.ReAllocateIfNeeded(ref m_DiffusionX1, m_Descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: m_DiffusionX1.name);
-
-            RenderingUtils.ReAllocateIfNeeded(ref m_DiffusionX2, m_Descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: m_DiffusionX2.name);
-            RenderingUtils.ReAllocateIfNeeded(ref m_DiffusionY2, m_Descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: m_DiffusionY2.name);
-
-            cmd.EnableShaderKeyword("_Diffusion");
-            //cmd.SetRenderTarget()
-
+            DiffusionPower2 = 0,
+            DiffusionBlurX = 1,
+            DiffusionBlurY = 2,
+            DiffusionComposite = 3,
+            DownSample = 4,
         }
+
+
+        void SetupDiffusion(CommandBuffer cmd, RTHandle source, Material material)
+        {
+            //var cameraData = renderingData.cameraData;
+            // ref var cameraData = ref renderingData.cameraData;
+            //RenderTargetIdentifier target = cameraData.targetTexture;
+            // RenderTargetIdentifier target = cameraData.targetTexture ? cameraData.targetTexture : BuiltinRenderTextureType.CameraTarget;
+
+            RenderingUtils.ReAllocateIfNeeded(ref m_DiffusionTexture, m_Descriptor, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_DiffusionTexture");
+
+            var diffusionMaterial = material;
+            int width = m_Descriptor.width / 2 ;
+            int height = m_Descriptor.height / 2;
+
+            var desc = GetCompatibleDescriptor(width, height, m_DefaultHDRFormat);
+            RenderingUtils.ReAllocateIfNeeded(ref m_DiffusionComposite, desc, FilterMode.Bilinear, TextureWrapMode.Clamp, name : "_DiffusionComposite");
+            RenderingUtils.ReAllocateIfNeeded(ref m_DiffusionX1, desc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_DiffusionX1");
+
+            int quarter_width = width / 2;
+            int quarter_height = height / 2;
+            var quarter_desc = GetCompatibleDescriptor(quarter_width, quarter_height, m_DefaultHDRFormat);
+            RenderingUtils.ReAllocateIfNeeded(ref m_DiffusionX2, quarter_desc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_DiffusionX2");
+            RenderingUtils.ReAllocateIfNeeded(ref m_DiffusionY2, quarter_desc, FilterMode.Bilinear, TextureWrapMode.Clamp, name: "_DiffusionY2");
+
+            
+            //souece -> DC
+            Blitter.BlitCameraTexture(cmd, source, m_DiffusionComposite, RenderBufferLoadAction.DontCare, 
+                                        RenderBufferStoreAction.Store, diffusionMaterial, (int)DiffusionMaterialPass.DiffusionPower2);
+            setParams(new Vector2(width * 2, height * 2), true, cmd);
+            //DC -> X1
+            Blitter.BlitCameraTexture(cmd, m_DiffusionComposite, m_DiffusionX1, RenderBufferLoadAction.DontCare, 
+                                        RenderBufferStoreAction.Store, diffusionMaterial, (int)DiffusionMaterialPass.DiffusionBlurX);
+
+            //X1 -> DC
+            setParams(new Vector2(width * 2, height * 2), false, cmd);
+            Blitter.BlitCameraTexture(cmd, m_DiffusionX1, m_DiffusionComposite, RenderBufferLoadAction.DontCare,
+                                        RenderBufferStoreAction.Store, diffusionMaterial, (int)DiffusionMaterialPass.DiffusionBlurY);
+            //DC -> Y2
+            cmd.SetGlobalVector(ShaderConstants.DiffusionViewSize0, new Vector4(width, height, 1f / width, 1f / height));
+            Blitter.BlitCameraTexture(cmd, m_DiffusionComposite, m_DiffusionY2, RenderBufferLoadAction.DontCare, 
+                                        RenderBufferStoreAction.Store, diffusionMaterial, (int)DiffusionMaterialPass.DownSample);
+            //Y2 -> X2
+            setParams(new Vector2(width, height), true, cmd);
+            Blitter.BlitCameraTexture(cmd, m_DiffusionY2, m_DiffusionX2, RenderBufferLoadAction.DontCare,
+                                        RenderBufferStoreAction.Store, diffusionMaterial, (int)DiffusionMaterialPass.DiffusionBlurX);
+            //X2 -> Y2
+            setParams(new Vector2(width, height), false, cmd);
+            Blitter.BlitCameraTexture(cmd, m_DiffusionX2, m_DiffusionY2, RenderBufferLoadAction.DontCare, 
+                                        RenderBufferStoreAction.Store, diffusionMaterial, (int)DiffusionMaterialPass.DiffusionBlurY);
+            //Y2 + souece -> DC
+            //cmd.SetGlobalTexture(ShaderConstants.DiffusionY2, m_DiffusionY2);
+            ////cmd.SetGlobalTexture(ShaderConstants.DiffusionTexture, source);
+
+            //Blitter.BlitCameraTexture(cmd, source, m_DiffusionTexture, RenderBufferLoadAction.DontCare,
+            //                            RenderBufferStoreAction.Store, diffusionMaterial, (int)DiffusionMaterialPass.DiffusionComposite);
+
+            cmd.SetGlobalTexture(ShaderConstants.DiffusionTexture, m_DiffusionY2);
+        }
+
+
+        private void setParams(Vector2 ratio, bool Horizontal, CommandBuffer cmd)
+        {
+            var filterSizeAndInverse = new Vector4(ratio.x, ratio.y, 1.0f / ratio.x, 1.0f / ratio.y);
+            var crossCenterWeight = Mathf.Max(0.0f, m_Diffusion.CrossCenterWeight.value);
+            var kernelSizePercent = m_Diffusion.KernelSizePercent.value;
+
+            var blurRadius = GetBlurRadius((int)ratio.x, kernelSizePercent);
+
+            int SampleCount = Compute1DGaussianFilterKernel(m_offsetAndWeight, s_sampleCountMax, blurRadius, crossCenterWeight);
+
+            // Weights multiplied by a white tint.
+            for (int i = 0; i < SampleCount; ++i)
+            {
+                float Weight = m_offsetAndWeight[i].y;
+
+                if (Horizontal)
+                {
+                    m_sampleWeights[i] = new Vector4(Weight, Weight, Weight, Weight);
+                }
+                else
+                {
+                    var tintColor = m_Diffusion.TintColor.value;
+                    m_sampleWeights[i] = new Vector4(tintColor.r, tintColor.g, tintColor.b, tintColor.a) * Weight;
+                }
+            }
+
+            for (int i = 0; i < SampleCount; ++i)
+            {
+                float Offset = m_offsetAndWeight[i].x;
+                if (Horizontal)
+                    m_sampleOffsets[i] = new Vector2(filterSizeAndInverse.z * Offset, 0.0f) * m_Diffusion.Scale.value;
+                else
+                    m_sampleOffsets[i] = new Vector2(0f, filterSizeAndInverse.w * Offset) * m_Diffusion.Scale.value;
+            }
+
+            UpdateShaderFilterParams(SampleCount);
+
+            cmd.SetGlobalInt(ShaderConstants.SampleCount, SampleCount);
+            cmd.SetGlobalVector(ShaderConstants.DiffusionViewSize0, new Vector4(ratio.x, ratio.y, 1f / ratio.x, 1f / ratio.y));
+            cmd.SetGlobalVectorArray(ShaderConstants.SampleWeights, m_shaderWeights);
+            cmd.SetGlobalVectorArray(ShaderConstants.SampleOffsets, m_shaderOffsets);
+        }
+        float GetBlurRadius(int ViewSize, float KernelSizePercent)
+        {
+            const float PercentToScale = 0.01f;
+            const float DiameterToRadius = 0.5f;
+
+            return ViewSize * KernelSizePercent * PercentToScale * DiameterToRadius;
+        }
+        int Compute1DGaussianFilterKernel(Vector2[] OutOffsetAndWeight, int SampleCountMax, float KernelRadius, float CrossCenterWeight)
+        {
+            float FilterSizeScale = Mathf.Clamp(m_Diffusion.FilterSize.value, 0.1f, 10.0f);
+
+            float ClampedKernelRadius = GetClampedKernelRadius(SampleCountMax, KernelRadius);
+
+            int IntegerKernelRadius = GetIntegerKernelRadius(SampleCountMax, KernelRadius * FilterSizeScale);
+
+            int SampleCount = 0;
+
+            float WeightSum = 0.0f;
+
+            for (int SampleIndex = -IntegerKernelRadius; SampleIndex <= IntegerKernelRadius; SampleIndex += 2)
+            {
+                float Weight0 = NormalDistributionUnscaled(SampleIndex, ClampedKernelRadius, CrossCenterWeight);
+                float Weight1 = 0.0f;
+
+                // We use the bilinear filter optimization for gaussian blur. However, we don't want to bias the
+                // last sample off the edge of the filter kernel, so the very last tap just is on the pixel center.
+                if (SampleIndex != IntegerKernelRadius)
+                {
+                    Weight1 = NormalDistributionUnscaled(SampleIndex + 1, ClampedKernelRadius, CrossCenterWeight);
+                }
+
+                float TotalWeight = Weight0 + Weight1;
+
+                OutOffsetAndWeight[SampleCount].x = SampleIndex + (Weight1 / TotalWeight);
+                OutOffsetAndWeight[SampleCount].y = TotalWeight;
+
+                WeightSum += TotalWeight;
+                SampleCount++;
+            }
+
+            // Normalize blur weights.
+            float WeightSumInverse = 1.0f / WeightSum;
+
+            for (int SampleIndex = 0; SampleIndex < SampleCount; ++SampleIndex)
+            {
+                OutOffsetAndWeight[SampleIndex].y *= WeightSumInverse;
+            }
+
+            return SampleCount;
+        }
+
+        int GetIntegerKernelRadius(int SampleCountMax, float KernelRadius)
+        {
+            // Smallest radius will be 1.
+            return (int)Mathf.Min(Mathf.Ceil(GetClampedKernelRadius(SampleCountMax, KernelRadius)), SampleCountMax - 1);
+        }
+
+        float GetClampedKernelRadius(int SampleCountMax, float KernelRadius)
+        {
+            return Mathf.Clamp(KernelRadius, 0.00001f, SampleCountMax - 1);
+        }
+
+        // Evaluates an unnormalized normal distribution PDF around 0 at given X with Variance.
+        float NormalDistributionUnscaled(float X, float Sigma, float CrossCenterWeight)
+        {
+            float DX = Mathf.Abs(X);
+
+            float ClampedOneMinusDX = Mathf.Max(0.0f, 1.0f - DX);
+
+            // Tweak the gaussian shape e.g. "r.Bloom.Cross 3.5"
+            if (CrossCenterWeight > 1.0f)
+            {
+                return Mathf.Pow(ClampedOneMinusDX, CrossCenterWeight);
+            }
+            else
+            {
+                const float LegacyCompatibilityConstant = -16.7f;
+
+                float Gaussian = Mathf.Exp(LegacyCompatibilityConstant * (DX / Sigma) * (DX / Sigma));
+
+                return Mathf.Lerp(Gaussian, ClampedOneMinusDX, CrossCenterWeight);
+            }
+        }
+
+
+        //UE Compute1DGaussianFilterKernel
+
+        private void UpdateShaderFilterParams(int sampleCount)
+        {
+            for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex += 2)
+            {
+                m_shaderOffsets[sampleIndex / 2].x = m_sampleOffsets[sampleIndex].x;
+                m_shaderOffsets[sampleIndex / 2].y = m_sampleOffsets[sampleIndex].y;
+
+                if (sampleIndex + 1 < sampleCount)
+                {
+                    m_shaderOffsets[sampleIndex / 2].z = m_sampleOffsets[sampleIndex + 1].x;
+                    m_shaderOffsets[sampleIndex / 2].w = m_sampleOffsets[sampleIndex + 1].y;
+                }
+            }
+
+            for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
+            {
+                m_shaderWeights[sampleIndex] = m_sampleWeights[sampleIndex];
+            }
+        }
+
 
         #endregion
 
@@ -1624,6 +2123,8 @@ namespace UnityEngine.Rendering.Universal
             public readonly Material uber;
             public readonly Material finalPass;
             public readonly Material lensFlareDataDriven;
+            public readonly Material diffusion;
+            public readonly Material ssgi;
 
             public MaterialLibrary(PostProcessData data)
             {
@@ -1644,6 +2145,8 @@ namespace UnityEngine.Rendering.Universal
                 uber = Load(data.shaders.uberPostPS);
                 finalPass = Load(data.shaders.finalPostPassPS);
                 lensFlareDataDriven = Load(data.shaders.LensFlareDataDrivenPS);
+                diffusion = Load(data.shaders.diffusionPS);
+                ssgi = Load(data.shaders.ssgiPS);
             }
 
             Material Load(Shader shader)
@@ -1676,6 +2179,8 @@ namespace UnityEngine.Rendering.Universal
                 CoreUtils.Destroy(uber);
                 CoreUtils.Destroy(finalPass);
                 CoreUtils.Destroy(lensFlareDataDriven);
+                CoreUtils.Destroy(diffusion);
+                CoreUtils.Destroy(ssgi);
             }
         }
 
@@ -1737,6 +2242,41 @@ namespace UnityEngine.Rendering.Universal
             public static readonly int _FlareData5 = Shader.PropertyToID("_FlareData5");
 
             public static readonly int _FullscreenProjMat = Shader.PropertyToID("_FullscreenProjMat");
+
+            public static readonly int DiffusionTexture = Shader.PropertyToID("_Diffusion_Texture");
+            public static readonly int DiffusionY2 = Shader.PropertyToID("_DiffusionY2");
+            public static readonly int DiffusionComposite = Shader.PropertyToID("_DiffusionComposite");
+            public static readonly int SampleCount = Shader.PropertyToID("_SampleCount");
+            public static readonly int DiffusionViewSize0 = Shader.PropertyToID("_DiffusionViewSize0");
+            public static readonly int SampleWeights = Shader.PropertyToID("_SampleWeights");
+            public static readonly int SampleOffsets = Shader.PropertyToID("_SampleOffsets");
+
+            public static readonly int SSGIDownSampleInputParameter0 = Shader.PropertyToID("SSGIDownSampleInputParameter0");
+            public static readonly int UVClampParam = Shader.PropertyToID("UVClampParam");
+
+            public static readonly int SSGIDownSampleInput0 = Shader.PropertyToID("_SSGIDownSampleInput0");
+            public static readonly int SSGIDownSampleInput1 = Shader.PropertyToID("_SSGIDownSampleInput1");
+            public static readonly int SSGIDownSampleInput2 = Shader.PropertyToID("_SSGIDownSampleInput2");
+
+            public static readonly int HZBTexture = Shader.PropertyToID("_HZBTexture");
+
+            public static readonly int SSGIFilterTexture = Shader.PropertyToID("_SSGIFilterTexture");
+            public static readonly int SSGIOutputTexture = Shader.PropertyToID("_SSGIOutputTexture");
+
+            public static readonly int GIEnvTextureMap = Shader.PropertyToID("_GIEnvTextureMap");
+            public static readonly int GIEnvMiddleTextureMap = Shader.PropertyToID("_GIEnvMiddleTextureMap");
+            public static readonly int GIEnvFarTextureMap = Shader.PropertyToID("_GIEnvFarTextureMap");
+            public static readonly int SceneColorTexture = Shader.PropertyToID("_SceneColorTexture");
+            public static readonly int SceneDepthTexture = Shader.PropertyToID("_SceneDepthTexture");
+
+            public static readonly int SSGIIntensity = Shader.PropertyToID("SSGIIntensity");
+            public static readonly int SSGIThreshold = Shader.PropertyToID("SSGIThreshold");
+            public static readonly int MainLightDirection = Shader.PropertyToID("MainLightDirection");
+            public static readonly int TranslatedWorldToView = Shader.PropertyToID("TranslatedWorldToView");
+
+            public static int[] _ssgiEnv;
+            public static int[] _ssgiEnvMiddle;
+            public static int[] _ssgiEnvFar;
 
             public static int[] _BloomMipUp;
             public static int[] _BloomMipDown;

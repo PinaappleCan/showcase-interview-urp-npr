@@ -136,6 +136,13 @@ namespace UnityEngine.Rendering.Universal
             /// </summary>
             [Reload("Shaders/PostProcessing/FinalPost.shader")]
             public Shader finalPostPassPS;
+
+            [Reload("Shaders/PostProcessing/Diffusion.shader")]
+            public Shader diffusionPS;
+
+
+            [Reload("Shaders/PostProcessing/ScreenSpaceGlobalIllumination.shader")]
+            public Shader ssgiPS;
         }
 
         /// <summary>

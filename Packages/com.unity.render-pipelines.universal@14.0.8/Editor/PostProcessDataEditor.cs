@@ -25,8 +25,8 @@ namespace UnityEditor.Rendering.Universal
             serializedObject.Update();
 
             // Add a "Reload All" button in inspector when we are in developer's mode
-            if (EditorPrefs.GetBool("DeveloperMode"))
-            {
+            //if (EditorPrefs.GetBool("DeveloperMode"))
+            //{
                 EditorGUILayout.Space();
                 EditorGUILayout.PropertyField(m_Shaders, true);
                 EditorGUILayout.PropertyField(m_Textures, true);
@@ -38,7 +38,7 @@ namespace UnityEditor.Rendering.Universal
                     resources.textures = null;
                     ResourceReloader.ReloadAllNullIn(target, UniversalRenderPipelineAsset.packagePath);
                 }
-            }
+            //}
 
             serializedObject.ApplyModifiedProperties();
         }

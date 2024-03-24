@@ -167,6 +167,7 @@ namespace UnityEditor.Rendering.Universal
         LocalKeyword m_BloomHQ;
         LocalKeyword m_BloomLQDirt;
         LocalKeyword m_BloomHQDirt;
+        LocalKeyword m_EnableDiffusion;
         LocalKeyword m_HdrGrading;
         LocalKeyword m_ToneMapACES;
         LocalKeyword m_ToneMapNeutral;
