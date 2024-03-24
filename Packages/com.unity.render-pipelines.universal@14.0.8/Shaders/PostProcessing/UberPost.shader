@@ -5,6 +5,9 @@ Shader "Hidden/Universal Render Pipeline/UberPost"
         #pragma multi_compile_local_fragment _ _DISTORTION
         #pragma multi_compile_local_fragment _ _CHROMATIC_ABERRATION
         #pragma multi_compile_local_fragment _ _BLOOM_LQ _BLOOM_HQ _BLOOM_LQ_DIRT _BLOOM_HQ_DIRT
+        #pragma multi_compile_local_fragment _ _ENABLE_DIFFUSION
+        #pragma multi_compile_local_fragment _ _ENABLE_SSGI
+        #pragma multi_compile_local_fragment _ _DEBUG_SSGI
         #pragma multi_compile_local_fragment _ _HDR_GRADING _TONEMAP_ACES _TONEMAP_NEUTRAL
         #pragma multi_compile_local_fragment _ _FILM_GRAIN
         #pragma multi_compile_local_fragment _ _DITHERING
@@ -42,7 +45,13 @@ Shader "Hidden/Universal Render Pipeline/UberPost"
             #endif
         #endif
 
+        #if _ENABLE_DIFFUSION
+            #define DIFFUSION
+        #endif
+
         TEXTURE2D_X(_Bloom_Texture);
+        TEXTURE2D_X(_Diffusion_Texture);
+        TEXTURE2D_X(_SSGIOutputTexture);
         TEXTURE2D(_LensDirt_Texture);
         TEXTURE2D(_Grain_Texture);
         TEXTURE2D(_InternalLut);
@@ -115,6 +124,12 @@ Shader "Hidden/Universal Render Pipeline/UberPost"
         #define PaperWhite              _HDROutputLuminanceParams.z
         #define OneOverPaperWhite       _HDROutputLuminanceParams.w
 
+        half3 sRGBToLinear(half3 Color)
+        {
+            Color = max(6.10352e-5, Color); // minimum positive non-denormal (fixes black problem on DX11 AMD and NV)
+            return Color > 0.04045 ? pow(Color * (1.0 / 1.055) + 0.0521327, 2.4) : Color * (1.0 / 12.92);
+        }
+
         float2 DistortUV(float2 uv)
         {
             // Note: this variant should never be set with XR
@@ -171,10 +186,35 @@ Shader "Hidden/Universal Render Pipeline/UberPost"
             }
             #endif
 
+            #if _ENABLE_SSGI
+            float4 ssgiColor = SAMPLE_TEXTURE2D_X(_SSGIOutputTexture, sampler_LinearClamp, uv);
+            #if _DEBUG_SSGI
+                return (ssgiColor);
+            #endif
+                color += ssgiColor;
+            #endif
+
             // Gamma space... Just do the rest of Uber in linear and convert back to sRGB at the end
             #if UNITY_COLORSPACE_GAMMA
             {
                 color = GetSRGBToLinear(color);
+            }
+            #endif
+
+            #if defined(DIFFUSION)
+            {
+                float4 baseColor = SAMPLE_TEXTURE2D(_BlitTexture, sampler_LinearClamp, uv);
+                float4 pow2Color = baseColor * baseColor;
+
+                float4 blurColor = SAMPLE_TEXTURE2D(_Diffusion_Texture, sampler_LinearClamp, uv);
+                float4 diffusionColor = (1.0f - ((1.0f - pow2Color) * (1.0f - blurColor)));
+
+                diffusionColor.xyz = max(baseColor.xyz, diffusionColor.xyz);
+                diffusionColor.w = baseColor.w;
+
+                diffusionColor.rgb = sRGBToLinear(diffusionColor.rgb);
+
+                color += diffusionColor.rgb;
             }
             #endif
 

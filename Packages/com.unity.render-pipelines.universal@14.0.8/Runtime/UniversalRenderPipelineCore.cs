@@ -1075,6 +1075,15 @@ namespace UnityEngine.Rendering.Universal
         /// <summary> Keyword used for high quality Bloom dirt. </summary>
         public const string BloomHQDirt = "_BLOOM_HQ_DIRT";
 
+        /// <summary> Keyword used for enable diffusion.  </summary>
+        public const string EnableDiffusion = "_ENABLE_DIFFUSION";
+
+        /// <summary> Keyword used for enable SSGI.  </summary>
+        public const string EnableSSGI = "_ENABLE_SSGI";
+
+        /// <summary> Keyword used for SSGI Debug.  </summary>
+        public const string DebugSSGI = "_DEBUG_SSGI";
+
         /// <summary> Keyword used for RGBM format for Bloom. </summary>
         public const string UseRGBM = "_USE_RGBM";
 
@@ -1709,6 +1718,8 @@ namespace UnityEngine.Rendering.Universal
         PaniniProjection,
         UberPostProcess,
         Bloom,
+        Diffusion,
+        SSGI,
         LensFlareDataDrivenComputeOcclusion,
         LensFlareDataDriven,
         MotionVectors,
